@@ -21,14 +21,15 @@ public class VarnishController {
                 "    <meta charset=\"UTF-8\">\n" +
                 "    <title>Title</title>\n" +
                 "\n" +
-                "    <esi:include src=\"http://localhost:8081/user\"/>\n" +
-                "    <ul>\n" +
-                "        <li>$id</li>\n" +
-                "        <li>$name</li>\n" +
-                "    </ul>\n" +
+                "\n" +
                 "</head>\n" +
                 "<body>\n" +
                 "\n" +
+                "    <esi:include src=\"http://localhost:8081/user\"/>\n" +
+                "    <ul>\n" +
+                "        <li>$user.id</li>\n" +
+                "        <li>$user.name</li>\n" +
+                "    </ul>\n" +
                 "</body>\n" +
                 "</html>";
     }
