@@ -1,0 +1,150 @@
+### 一 介绍
+
+```
+Varnish是一款高性能的开源HTTP加速器，挪威最大的在线报纸 Verdens Gang 使用3台Varnish代替了原来的12台Squid，性能比以前更好。
+```
+
+### 二 使用
+1 配置default.vcl
+    
+```
+vcl 4.0;
+
+import directors;
+
+probe health_check {
+        .url = "/healthcheck";
+        .timeout = 4s;
+        .interval = 2m;
+        .window = 10;
+        .threshold = 8;
+       # .expected_response = 20
+}
+
+backend varnish_demo {
+    .host = "localhost";
+    .port = "8081";
+    .probe = health_check;
+}
+
+backend default {
+    .host = "localhost";
+    .port = "8081";
+    .probe = health_check;
+}
+
+/*acl my_purge {
+    "localhost";
+    "127.0.0.1";
+}*/
+
+sub vcl_init{
+    new varnish_demo_backend = directors.round_robin();
+    varnish_demo_backend.add_backend(varnish_demo);
+}
+
+sub vcl_recv {
+
+    if(req.url ~ "/test"){
+        if(req.url ~ "/varnish"){
+            set req.backend_hint = varnish_demo_backend.backend();
+        }
+
+        if(req.http.x-forwarded-for) {
+            set req.http.x-forwared-for = req.http.x-forwarded+","+client.ip;
+        }
+
+        return (hash);
+    }
+}
+
+sub vcl_backend_fetch {
+    if(bereq.url ~ "/test") {
+        set bereq.http.access_from_varnish = true;
+        return (fetch);
+    }
+}
+
+sub vcl_hash {
+    if(req.url ~ "/test") {
+        hash_data(regsub(req.url,"\?.*",""));
+        if (req.http.host) {
+        hash_data(req.http.host);
+        } else {
+        hash_data(server.ip);
+        }
+        if (req.http.X-UA-Device) {
+            hash_data(req.http.X-UA-Device);
+        }
+        return (lookup);
+    }
+}
+
+sub vcl_backend_response {
+
+    set beresp.grace = 0s;
+    if(bereq.url ~ "/test") {
+        set beresp.ttl = 120s;
+        set beresp.do_esi = true;
+        if (beresp.ttl <= 0s
+            || beresp.http.Set-Cookie
+            || beresp.status != 200
+            || beresp.http.Surrogate-control ~ "no-store"
+            || (!beresp.http.Surrogate-Control && beresp.http.Cache-Control ~ "no-cache|no-store|private")
+            || beresp.http.Vary == "*") {
+
+            set beresp.uncacheable = true;
+        }
+        return (deliver);
+    }
+    set beresp.uncacheable = true;
+}
+
+sub vcl_deliver {
+    # Happens when we have all the pieces we need, and are about to send the
+    # response to the client.
+    #
+    # You can do accounting or modifying the final object here.
+    if(req.url ~ "/test") {
+        if (obj.hits > 0) {
+        set resp.http.X-Cache-Status = "HIT";
+        } else {
+        set resp.http.X-Cache-Status = "MISS";
+        }
+        set resp.http.Cache-Control="no-cache";
+        unset resp.http.Via;
+        unset resp.http.X-Varnish;
+        unset resp.http.x-url;
+        return (deliver);
+    }
+}
+
+sub vcl_backend_error {
+
+    if(bereq.url ~ "/test") {
+        set beresp.http.Content-Type = "text/plain; charset=utf-8";
+        return (deliver);
+    }
+}
+```
+2 启动 varnish
+
+```
+a 监听8080端口
+
+/usr/local/sbin/varnishd -n /usr/local/var/varnish -f /usr/local/etc/varnish/default.vcl -s malloc,1G -T 127.0.0.1:2000 -a 0.0.0.0:8080
+
+b 查看是否启动
+
+/usr/bin/pgrep -lf varnish
+```
+3 启动后台服务
+
+```
+由于varnish监听8080端口，所以如果服务是本地服务，需要将端口改为其它 如8081
+```
+4 访问任意一个ip的8080端口，如果符合配置文件的url则varnish会将请求转发到localhost:8081的服务上，同时将满足配置文件条件的请求缓存
+
+5 浏览器输入 http://localhost:8080/test/varnish 返回请求头中有'Age'和'X-Cache-Status'，'X-Cache-Status = HIT'则表示命中了varnish缓存
+
+
